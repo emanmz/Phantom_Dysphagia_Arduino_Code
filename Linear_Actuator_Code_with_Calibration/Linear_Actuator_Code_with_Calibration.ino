@@ -28,8 +28,8 @@ const float CAL_LVDT_SLOPE_MM_PER_BIT = -0.00518; // m (mm/bit)
 const float CAL_LVDT_INTERCEPT_MM = 4.84308; // b (mm)
 
 // LVDT Filtering Limits: Data must be STRICTLY between these values.
-const float LVDT_MAX_DEFLECTION = 4.0; // anything above or at this ignore
-const float LVDT_MIN_DEFLECTION = 1.5; // anything below or at this ignore
+const float LVDT_MAX_DEFLECTION = 3.7; // anything above or at this ignore
+const float LVDT_MIN_DEFLECTION = 1.7; // anything below or at this ignore
 const float CAL_Y_MAX_MM = 2.5; // Max vertical stroke used for calibration (LVDT limit)
 
 // =============================================================
@@ -81,12 +81,6 @@ void setup() {
 // =============================================================
 void loop() {
   if (!Serial.available()) return;
-  Serial.println("Undeflected: ");
-  readLVDT_mm();
-  Serial.println("Delay of 5 seconds")
-  delay(5000);
-  Serial.println("Max deflected: ");
-  readLVDT_mm();
 
   String input = Serial.readStringUntil('\n');
   input.trim();
@@ -143,10 +137,10 @@ void loop() {
     vertSpeed = constrain(vertSpeed, 20.0, 80.0);
 
     Serial.println("Moving...");
-    moveBoth(horizMM, horizSpeed, vertMM, vertSpeed);
+    moveBoth_Without_Calib(horizMM, horizSpeed, vertMM, vertSpeed);
 
     Serial.println("Returning to zero...");
-    moveBoth(0, horizSpeed, 0, vertSpeed);
+    moveBoth_Without_Calib(0, horizSpeed, 0, vertSpeed);
   }
 }
 
@@ -204,6 +198,9 @@ void linearRegression(float *x, float *y, int n, float &slope, float &intercept)
 // Uses 0.1 mm steps and filters LVDT data.
 // =============================================================
 void calibrate_x() {
+  Serial.println("Moving Y axis for LVDT to sit flush with calibration block...");
+  float y_coord_for_calib = 5.0;
+  moveBoth_Without_Calib(0, 0, y_coord_for_calib, 10);
   Serial.println("Starting X calibration...");
 
   // Calibrate over the entire horizontal stroke (13.04 mm) with 0.1 mm steps
@@ -216,12 +213,17 @@ void calibrate_x() {
   int valid_count = 0; // Actual number of valid points collected
 
   // Loop through all commanded positions
-  for (float mm_cmd = 0.0; idx < N_MAX; mm_cmd += stepSize) {
+  for (float mm_cmd = 0.0; valid_count < 15; mm_cmd += stepSize) {
+    //Serial.println(idx);
+    //Serial.println(N_MAX);
     // Stop if commanded position exceeds max stroke
-    if (mm_cmd > max_position_mm_horizontal) break;
+    if (mm_cmd > max_position_mm_horizontal){
+      Serial.print("HERE!");
+      break;
+    }
 
-    // Move horizontal actuator to mm_cmd, vertical actuator to 0.
-    moveBoth(mm_cmd, 10, 0, 40);
+    // Move horizontal actuator to mm_cmd, vertical actuator to y_coord_for_calib.
+    moveBoth_Without_Calib(mm_cmd, 10, y_coord_for_calib, 1);
     delay(300); // Wait for movement to settle
 
     float mm_measured = readLVDT_mm(); // Read and filter LVDT data
@@ -242,7 +244,7 @@ void calibrate_x() {
     }
     idx++; // Increment loop counter regardless of data validity
   }
-
+  Serial.println("out of for loop");
   // Compute regression
   if (valid_count < 2) {
     Serial.println("ERROR: Insufficient valid data for X calibration. Keeping default coefficients.");
@@ -256,11 +258,12 @@ void calibrate_x() {
     Serial.println(cal_slope_X, 6);
     Serial.print("New Cal Offset (mm): ");
     Serial.println(cal_offset_X, 6);
+  
   }
   
   // Return to zero position
   Serial.println("Returning to zero...");
-  moveBoth(0, 10, 0, 40);
+  moveBoth_Without_Calib(0, 10, 0, 10);
 }
 
 
@@ -324,7 +327,7 @@ void calibrate_y() {
   
   // Return to zero position
   Serial.println("Returning to zero...");
-  moveBoth(0, 10, 0, 40);
+  moveBoth_Without_Calib(0, 10, 0, 40);
 }
 
 
@@ -339,10 +342,16 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
   // Real = Slope * Commanded + Offset   →   Commanded = (Real - Offset) / Slope
   float horizMM = (realHorizMM - cal_offset_X) / cal_slope_X;
   float vertMM = (realVertMM - cal_offset_Y) / cal_slope_Y;
-  
+  Serial.println("Horizontal Movement");
   Serial.print(realHorizMM);
   Serial.print(" mm (Desired Measurment) | ");
   Serial.print(horizMM);
+  Serial.print(" mm (Commanded Measurment)\n");
+  
+  Serial.println("Vertical Movement");
+  Serial.print(realVertMM);
+  Serial.print(" mm (Desired Measurment) | ");
+  Serial.print(vertMM);
   Serial.print(" mm (Commanded Measurment)\n");
   
 
@@ -361,10 +370,10 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
   bool dirH = (targetH > currentPositionStepsH);
   bool dirV = (targetV > currentPositionStepsV);
 
-  // Horizontal direction is flipped (LOW=Forward, HIGH=Backward)
+  // Horizontal direction is FLIPPED (LEFT/Positive MM = LOW)
   digitalWrite(dirPinH, dirH ? LOW : HIGH);
-  // Vertical direction (HIGH=Forward, LOW=Backward)
-  digitalWrite(dirPinV, dirV ? HIGH : LOW);
+  // Vertical direction (DOWN/Positive MM = LOW) 
+  digitalWrite(dirPinV, dirV ? LOW : HIGH);
 
   // 5. Calculate step delay (micro-seconds) from speed (mm/s)
   // Delay (us) = 1,000,000 / (Speed (mm/s) * Steps/mm)
@@ -380,20 +389,86 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
     
     // Horizontal Stepping
     if (sH < deltaH) {
-      digitalWrite(stepPinH, HIGH); delayMicroseconds(delayH);
-      digitalWrite(stepPinH, LOW); delayMicroseconds(delayH);
+      digitalWrite(stepPinH, HIGH); 
+      delayMicroseconds(delayH);
+      digitalWrite(stepPinH, LOW); 
+      delayMicroseconds(delayH);
       sH++;
     }
 
     // Vertical Stepping
     if (sV < deltaV) {
-      digitalWrite(stepPinV, HIGH); delayMicroseconds(delayV);
-      digitalWrite(stepPinV, LOW); delayMicroseconds(delayV);
+      digitalWrite(stepPinV, HIGH); 
+      delayMicroseconds(delayV);
+      digitalWrite(stepPinV, LOW); 
+      delayMicroseconds(delayV);
       sV++;
     }
   }
 
   // 7. Update current position
+  Serial.println(" ");
   currentPositionStepsH = targetH;
+  Serial.print("Current Pos H: ");
+  Serial.println(currentPositionStepsH);
   currentPositionStepsV = targetV;
+  Serial.print("Current Pos V: ");
+  Serial.println(currentPositionStepsV);
+}
+
+void moveBoth_Without_Calib(float horizMM, float horizSpeed_mmps, float vertMM, float vertSpeed_mmps) {
+  // Target steps can be negative if horizMM is negative
+  long targetH = horizMM * steps_per_mm_horizontal;
+  long targetV = vertMM * steps_per_mm_vertical;
+
+  // delta is always the absolute step difference needed
+  long deltaH = abs(targetH - currentPositionStepsH);
+  long deltaV = abs(targetV - currentPositionStepsV);
+
+  // dirH/dirV is true if moving to a higher (more positive) step count
+  bool dirH = targetH > currentPositionStepsH;
+  bool dirV = targetV > currentPositionStepsV;
+  
+  // Set directions
+  // Horizontal direction is FLIPPED (LEFT/Positive MM = LOW)
+  digitalWrite(dirPinH, dirH ? LOW : HIGH);
+  // Vertical direction (DOWN/Positive MM = LOW) 
+  digitalWrite(dirPinV, dirV ? LOW : HIGH); 
+
+  // Calculate step delay (micro-seconds) from speed (mm/s)
+  int delayH = (int)(1000000.0 / (horizSpeed_mmps * steps_per_mm_horizontal));
+  int delayV = (int)(1000000.0 / (vertSpeed_mmps * steps_per_mm_vertical));
+  // Ensure minimum delay (max speed limit)
+  delayH = max(80, delayH);
+  delayV = max(80, delayV);
+
+  long stepsH = 0, stepsV = 0;
+
+  // Core movement loop
+  while (stepsH < deltaH || stepsV < deltaV) {
+    if (stepsH < deltaH) {
+      digitalWrite(stepPinH, HIGH);
+      delayMicroseconds(delayH);
+      digitalWrite(stepPinH, LOW);
+      delayMicroseconds(delayH);
+      stepsH++;
+    }
+
+    if (stepsV < deltaV) {
+      digitalWrite(stepPinV, HIGH);
+      delayMicroseconds(delayV);
+      digitalWrite(stepPinV, LOW);
+      delayMicroseconds(delayV);
+      stepsV++;
+    }
+  }
+
+  // Update current position to the new (potentially negative) target
+  Serial.println(" ");
+  currentPositionStepsH = targetH;
+  Serial.print("Current Pos H: ");
+  Serial.println(currentPositionStepsH);
+  currentPositionStepsV = targetV;
+  Serial.print("Current Pos V: ");
+  Serial.println(currentPositionStepsV);
 }
