@@ -14,12 +14,13 @@ long currentPositionStepsV = 0;
 #define dirPinH 2
 #define stepPinH 3
 const float steps_per_mm_horizontal = 613.50;
-const float max_position_mm_horizontal = 13.04;
+//const float max_position_mm_horizontal = 13.04;
+const float max_position_mm_horizontal = 25.00;
 long currentPositionStepsH = 0; // Note: long is a signed type
 
 // Define the maximum allowed negative travel for horizontal axis (adjust this value)
 const float min_position_mm_horizontal = -5.0;
-
+const float min_position_mm_vertical = -5.0;
 
 // =============================================================
 //                      FUNCTION HEADERS
@@ -71,8 +72,7 @@ void loop() {
       // --- CHANGE: Horizontal position constraint updated to allow negative movement ---
       horizMM = constrain(horizMM, min_position_mm_horizontal, max_position_mm_horizontal);
       // Vertical constraint remains positive (0.0 to max)
-      vertMM = constrain(vertMM, 0.0, max_position_mm_vertical); 
-      
+      vertMM = constrain(vertMM, min_position_mm_vertical, max_position_mm_vertical);      
       // Safe speed constraints
       horizSpeed_mmps = constrain(horizSpeed_mmps, 5.0, 25.0);
       vertSpeed_mmps = constrain(vertSpeed_mmps, 20.0, 80.0);

@@ -13,7 +13,8 @@ long currentPositionStepsV = 0;
 #define dirPinH 2
 #define stepPinH 3
 const float steps_per_mm_horizontal = 613.50;
-const float max_position_mm_horizontal = 13.04;
+//const float max_position_mm_horizontal = 13.04;
+const float max_position_mm_horizontal = 25.00;
 long currentPositionStepsH = 0;
 
 
@@ -137,7 +138,7 @@ void loop() {
     vertSpeed = constrain(vertSpeed, 20.0, 80.0);
 
     Serial.println("Moving...");
-    moveBoth_Without_Calib(horizMM, horizSpeed, vertMM, vertSpeed);
+    moveBoth(horizMM, horizSpeed, vertMM, vertSpeed);
 
     Serial.println("Returning to zero...");
     moveBoth_Without_Calib(0, horizSpeed, 0, vertSpeed);
@@ -272,6 +273,9 @@ void calibrate_x() {
 // Uses 0.1 mm steps and filters LVDT data over a limited range.
 // =============================================================
 void calibrate_y() {
+  Serial.println("Moving X axis for LVDT to sit flush with calibration block...");
+  float x_coord_for_calib = 25.0;
+  moveBoth_Without_Calib(x_coord_for_calib, 10, 0, 0);
   Serial.println("Starting Y calibration...");
 
   // Calibrate over a limited vertical stroke (CAL_Y_MAX_MM) with 0.1 mm steps
@@ -283,12 +287,13 @@ void calibrate_y() {
   int idx = 0;
   int valid_count = 0;
 
-  for (float mm_cmd = 0.0; idx < N_MAX; mm_cmd += stepSize) {
+  for (float mm_cmd = 0.0; valid_count < 15; mm_cmd += stepSize) {
     // Stop if commanded position exceeds calibration limit
     if (mm_cmd > CAL_Y_MAX_MM) break;
 
     // Move only vertical actuator to mm_cmd, horizontal actuator to 0.
-    moveBoth(0, 10, mm_cmd, 40); 
+    //moveBoth(0, 10, mm_cmd, 40); 
+    moveBoth_Without_Calib(x_coord_for_calib, 0, mm_cmd, 10);
     delay(300);
 
     float mm_measured = readLVDT_mm(); // Read and filter LVDT data
