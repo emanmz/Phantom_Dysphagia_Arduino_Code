@@ -84,7 +84,7 @@ void loop() {
       
       Serial.println("Returning to zero...");
       // Then return to zero (0.0mm)
-      //moveBoth(0.0, horizSpeed_mmps, 0.0, vertSpeed_mmps);
+      moveBoth(0.0, horizSpeed_mmps, 0.0, vertSpeed_mmps);
     }
   }
 }
