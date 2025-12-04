@@ -38,12 +38,17 @@ const float CAL_Y_MAX_MM = 2.5; // Max vertical stroke used for calibration (LVD
 // (updated automatically after calibration)
 // Resulting equation: real mm = slope * commanded_mm + offset
 // =============================================================
-float cal_slope_X = 1.0; // Horizontal: real mm = slope * commanded_mm + offset
-float cal_offset_X = 0.0;
 
-float cal_slope_Y = 1.0; // Vertical: real mm = slope * commanded_mm + offset
-float cal_offset_Y = 0.0;
+//float cal_slope_X = 0.900650; 
+//float cal_offset_X = -0.776723;
+float cal_slope_X = 1; 
+float cal_offset_X = 0;
 
+float cal_slope_Y = 1.639743; 
+float cal_offset_Y = 0;
+
+//float cal_slope_Y = 1; 
+//float cal_offset_Y = 0;
 
 // =============================================================
 // FUNCTION HEADERS
@@ -141,7 +146,7 @@ void loop() {
     moveBoth(horizMM, horizSpeed, vertMM, vertSpeed);
 
     Serial.println("Returning to zero...");
-    moveBoth_Without_Calib(0, horizSpeed, 0, vertSpeed);
+    //moveBoth(0, horizSpeed, 0, vertSpeed);
   }
 }
 
@@ -274,8 +279,8 @@ void calibrate_x() {
 // =============================================================
 void calibrate_y() {
   Serial.println("Moving X axis for LVDT to sit flush with calibration block...");
-  float x_coord_for_calib = 25.0;
-  moveBoth_Without_Calib(x_coord_for_calib, 10, 0, 0);
+  float x_coord_for_calib = 0.0;
+  //moveBoth_Without_Calib(x_coord_for_calib, 10, 0, 0);
   Serial.println("Starting Y calibration...");
 
   // Calibrate over a limited vertical stroke (CAL_Y_MAX_MM) with 0.1 mm steps
@@ -345,8 +350,8 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
 {
   // 1. Convert REAL (Desired) MM to COMMANDED MM using calibration
   // Real = Slope * Commanded + Offset   →   Commanded = (Real - Offset) / Slope
-  float horizMM = (realHorizMM - cal_offset_X) / cal_slope_X;
-  float vertMM = (realVertMM - cal_offset_Y) / cal_slope_Y;
+  float horizMM = realHorizMM / cal_slope_X;
+  float vertMM = realVertMM / cal_slope_Y;
   Serial.println("Horizontal Movement");
   Serial.print(realHorizMM);
   Serial.print(" mm (Desired Measurment) | ");

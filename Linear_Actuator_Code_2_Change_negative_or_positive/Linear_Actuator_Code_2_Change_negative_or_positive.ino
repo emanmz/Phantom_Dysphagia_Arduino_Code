@@ -50,6 +50,8 @@ void setup() {
 //                            LOOP
 // =============================================================
 void loop() {
+  int sensorValue = analogRead(A0);
+  Serial.println(sensorValue);
   if (Serial.available()) {
     String input = Serial.readStringUntil('\n');
     input.trim();
@@ -84,7 +86,7 @@ void loop() {
       
       Serial.println("Returning to zero...");
       // Then return to zero (0.0mm)
-      moveBoth(0.0, horizSpeed_mmps, 0.0, vertSpeed_mmps);
+      // moveBoth(0.0, horizSpeed_mmps, 0.0, vertSpeed_mmps);
     }
   }
 }

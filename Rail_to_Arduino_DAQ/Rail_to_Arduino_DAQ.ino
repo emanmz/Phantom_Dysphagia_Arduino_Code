@@ -13,7 +13,6 @@ long currentPositionStepsV = 0;
 #define dirPinH 2
 #define stepPinH 3
 const float steps_per_mm_horizontal = 613.50;
-//const float max_position_mm_horizontal = 13.04;
 const float max_position_mm_horizontal = 25.00;
 long currentPositionStepsH = 0;
 
@@ -21,30 +20,26 @@ long currentPositionStepsH = 0;
 // =============================================================
 // LVDT CALIBRATION
 // LVDT connected to Analog Pin A0
-// Constants from your Python fit: mm = m * bit + b
-// Your Python output: Slope (m) = -0.00518, Intercept (b) = 4.84308
 // =============================================================
 const int LVDT_PIN = A0;
 const float CAL_LVDT_SLOPE_MM_PER_BIT = -0.00518; // m (mm/bit)
 const float CAL_LVDT_INTERCEPT_MM = 4.84308; // b (mm)
 
-// LVDT Filtering Limits: Data must be STRICTLY between these values.
-const float LVDT_MAX_DEFLECTION = 3.7; // anything above or at this ignore
-const float LVDT_MIN_DEFLECTION = 1.7; // anything below or at this ignore
-const float CAL_Y_MAX_MM = 2.5; // Max vertical stroke used for calibration (LVDT limit)
+// LVDT Filtering Limits
+const float LVDT_MAX_DEFLECTION = 3.7; 
+const float LVDT_MIN_DEFLECTION = 1.7; 
+const float CAL_Y_MAX_MM = 2.5; 
 
 // =============================================================
 // CALIBRATION COEFFICIENTS
-// PLACE CALIBRATION RESULTS HERE AFTER RUNNING CALIBRATION WITH ARDUINO CODE IF USING
-// // =============================================================
-float cal_slope_X = 0.900650; // Horizontal: real mm = slope * commanded_mm + offset
+// These map Commanded MM (calculated from steps) to Real MM (estimated position)
+// Real_MM = Commanded_MM * Slope + Offset
+// Commanded_MM = (Real_MM - Offset) / Slope
+// =============================================================
+float cal_slope_X = 0.900650; 
 float cal_offset_X = -0.776723;
-//Slope (m): 0.900650
-//Intercept (b): -0.776723
-float cal_slope_Y = 1.639743; // Vertical: real mm = slope * commanded_mm + offset
+float cal_slope_Y = 1.639743; 
 float cal_offset_Y = -1.543572;
-//New Cal Slope (mm/mm): 1.639743
-//New Cal Offset (mm): -1.543572
 
 // =============================================================
 // FUNCTION HEADERS
@@ -53,10 +48,13 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
               float realVertMM, float vertSpeed_mmps);
 void moveBoth_Without_Calib(float horizMM, float horizSpeed_mmps, float vertMM, float vertSpeed_mmps);
 float readLVDT_mm();
-void calibrate_x();
-void calibrate_y();
-void linearRegression(float *x, float *y, int n, float &slope, float &intercept);
 
+
+// =============================================================
+// GLOBAL LOGGING FLAG
+// Used to print the header only once before streaming starts.
+bool hasPrintedHeader = false;
+const int LOG_INTERVAL_STEPS = 50; 
 
 // =============================================================
 // SETUP
@@ -66,12 +64,12 @@ void setup() {
   pinMode(dirPinV, OUTPUT);
   pinMode(stepPinH, OUTPUT);
   pinMode(dirPinH, OUTPUT);
-  pinMode(LVDT_PIN, INPUT); // A0 is default INPUT
+  pinMode(LVDT_PIN, INPUT); 
 
   Serial.begin(9600);
   delay(300);
 
-  Serial.println("Ready. Use 'X', 'Y', or 'horizMM,horizSpeed,vertMM,vertSpeed' command.");
+  Serial.println("Ready. Use 'horizMM,horizSpeed,vertMM,vertSpeed' command.");
 }
 
 
@@ -84,19 +82,6 @@ void loop() {
   String input = Serial.readStringUntil('\n');
   input.trim();
   
-  // NOTE: Python automation sends commands directly.
-  
-  if (input.equalsIgnoreCase("X")) { 
-    Serial.println("Starting X calibration via serial command...");
-    calibrate_x(); 
-    return; 
-  }
-  if (input.equalsIgnoreCase("Y")) {
-    Serial.println("Starting Y calibration via serial command...");
-    calibrate_y(); 
-    return; 
-  }
-
   // --- direct movement (triggered by the Python script or manual input) ----
   if (input.indexOf(',') != -1) {
     int p1 = input.indexOf(',');
@@ -121,7 +106,7 @@ void loop() {
     moveBoth(horizMM, horizSpeed, vertMM, vertSpeed);
 
     Serial.println("Returning to zero...");
-    moveBoth(0, horizSpeed, 0, vertSpeed);
+    moveBoth_Without_Calib(0, horizSpeed, 0, vertSpeed);
   }
 }
 
@@ -131,60 +116,38 @@ void loop() {
 // =============================================================
 float readLVDT_mm() {
   long sum_bits = 0;
-  for (int i = 0; i < 200; i++) sum_bits += analogRead(LVDT_PIN); // Read 200 samples (0-1023)
+  // Increase sampling for better average (e.g., 200 samples)
+  for (int i = 0; i < 200; i++) sum_bits += analogRead(LVDT_PIN); 
   float avg_bit = sum_bits / 200.0;
   
   // Apply LVDT calibration: mm_measured = m * avg_bit + b
   float mm_measured = CAL_LVDT_SLOPE_MM_PER_BIT * avg_bit + CAL_LVDT_INTERCEPT_MM;
   
-  // Filtering logic: only accept data STRICTLY between min and max
-  if (mm_measured >= LVDT_MAX_DEFLECTION || mm_measured <= LVDT_MIN_DEFLECTION) {
-    return -999.0; // Sentinel value for bad data
-  }
   
   return mm_measured;
 }
+
 // =============================================================
-// MOVE FUNCTION (USES CALIBRATION) (MODIFIED FOR PYTHON)
+// MOVE FUNCTION (USES CALIBRATION) (REAL-TIME STREAMING)
 // =============================================================
 void moveBoth(float realHorizMM, float horizSpeed_mmps,
               float realVertMM, float vertSpeed_mmps)
 {
-  // 1. Convert REAL (Desired) MM to COMMANDED MM using calibration
-  // Real = Slope * Commanded + Offset   →   Commanded = (Real - Offset) / Slope
-  float horizMM = (realHorizMM - cal_offset_X) / cal_slope_X;
-  float vertMM = (realVertMM - cal_offset_Y) / cal_slope_Y;
+  // 1. Convert REAL (Desired) MM to COMMANDED MM using inverse calibration
+  float horizMM_cmd_target = (realHorizMM - cal_offset_X) / cal_slope_X;
+  float vertMM_cmd_target = (realVertMM - cal_offset_Y) / cal_slope_Y;
   
-  // --- CSV Data Output for Runtime Movement (Python Target) ---
-  Serial.println("\n#MOVE_CALC_DATA_START");
-  Serial.println("Desired_Horiz_MM,Commanded_Horiz_MM,X_Slope,X_Offset,Desired_Vert_MM,Commanded_Vert_MM,Y_Slope,Y_Offset");
-  
-  // Data Line
-  Serial.print(realHorizMM, 6); Serial.print(",");
-  Serial.print(horizMM, 6); Serial.print(",");
-  Serial.print(cal_slope_X, 6); Serial.print(",");
-  Serial.print(cal_offset_X, 6); Serial.print(",");
-  
-  Serial.print(realVertMM, 6); Serial.print(",");
-  Serial.print(vertMM, 6); Serial.print(",");
-  Serial.print(cal_slope_Y, 6); Serial.print(",");
-  Serial.println(cal_offset_Y, 6);
-  
-  Serial.println("#MOVE_CALC_DATA_END\n");
-  // ------------------------------------------------------------
-  
-
   // 2. Constrain Commanded MM to physical limits
-  horizMM = constrain(horizMM, 0.0, max_position_mm_horizontal);
-  vertMM = constrain(vertMM, 0.0, max_position_mm_vertical);
+  horizMM_cmd_target = constrain(horizMM_cmd_target, 0.0, max_position_mm_horizontal);
+  vertMM_cmd_target = constrain(vertMM_cmd_target, 0.0, max_position_mm_vertical);
 
   // 3. Convert Commanded MM to Target Steps
-  long targetH = round(horizMM * steps_per_mm_horizontal);
-  long targetV = round(vertMM * steps_per_mm_vertical);
+  long targetH = round(horizMM_cmd_target * steps_per_mm_horizontal);
+  long targetV = round(vertMM_cmd_target * steps_per_mm_vertical);
   
   // 4. Calculate steps to move (delta) and direction (dir)
-  long deltaH = abs(targetH - currentPositionStepsH);
-  long deltaV = abs(targetV - currentPositionStepsV);
+  long totalDeltaH = abs(targetH - currentPositionStepsH);
+  long totalDeltaV = abs(targetV - currentPositionStepsV);
 
   bool dirH = (targetH > currentPositionStepsH);
   bool dirV = (targetV > currentPositionStepsV);
@@ -195,19 +158,26 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
   digitalWrite(dirPinV, dirV ? LOW : HIGH);
 
   // 5. Calculate step delay (micro-seconds) from speed (mm/s)
-  // Delay (us) = 1,000,000 / (Speed (mm/s) * Steps/mm)
   int delayH = max(80, int(1000000.0 / (horizSpeed_mmps * steps_per_mm_horizontal)));
   int delayV = max(80, int(1000000.0 / (vertSpeed_mmps * steps_per_mm_vertical)));
 
   // 6. Perform the movement (Blocking)
-  long sH = 0; // Steps executed for Horizontal
-  long sV = 0; // Steps executed for Vertical
+  long sH = 0; // Steps executed for Horizontal in this move
+  long sV = 0; // Steps executed for Vertical in this move
+  int log_counter = 0; // Counter for step logging interval
   
-  // Loop until both actuators have reached their target steps
-  while (sH < deltaH || sV < deltaV) {
+  // Initial Header Print (Only print header once at the start of the first movement)
+  if (!hasPrintedHeader) {
+    // UPDATED HEADER with Commanded MM and Real MM for both axes
+    Serial.println("Time_ms,Steps_H,Commanded_H_mm,Real_H_mm,Steps_V,Commanded_V_mm,Real_V_mm,LVDT_Output_mm"); 
+    hasPrintedHeader = true;
+  }
+  
+  // Loop until both actuators have reached their delta steps
+  while (sH < totalDeltaH || sV < totalDeltaV) {
     
     // Horizontal Stepping
-    if (sH < deltaH) {
+    if (sH < totalDeltaH) {
       digitalWrite(stepPinH, HIGH); 
       delayMicroseconds(delayH);
       digitalWrite(stepPinH, LOW); 
@@ -216,21 +186,84 @@ void moveBoth(float realHorizMM, float horizSpeed_mmps,
     }
 
     // Vertical Stepping
-    if (sV < deltaV) {
+    if (sV < totalDeltaV) {
       digitalWrite(stepPinV, HIGH); 
       delayMicroseconds(delayV);
       digitalWrite(stepPinV, LOW); 
       delayMicroseconds(delayV);
       sV++;
     }
+    
+    // --- REAL-TIME LVDT SAMPLING AND STREAMING ---
+    // Log data every LOG_INTERVAL_STEPS (50 steps)
+    if (log_counter >= LOG_INTERVAL_STEPS) {
+      unsigned long current_time_ms = millis();
+      float current_lvdt_mm = readLVDT_mm();
+      
+      // Calculate current absolute position in steps
+      long current_steps_H = currentPositionStepsH + (dirH ? sH : -sH);
+      long current_steps_V = currentPositionStepsV + (dirV ? sV : -sV);
+
+      // Calculate the Commanded MM (based on physical steps)
+      float current_cmd_mm_H = current_steps_H / steps_per_mm_horizontal;
+      float current_cmd_mm_V = current_steps_V / steps_per_mm_vertical;
+
+      // Calculate the Estimated Real MM (based on calibration)
+      float current_real_mm_H = current_cmd_mm_H * cal_slope_X + cal_offset_X;
+      float current_real_mm_V = current_cmd_mm_V * cal_slope_Y + cal_offset_Y; // The one to compare with LVDT
+      
+      // Stream the data line (8 columns now)
+      Serial.print(current_time_ms); Serial.print(",");
+      Serial.print(current_steps_H); Serial.print(","); 
+      Serial.print(current_cmd_mm_H, 6); Serial.print(","); // NEW
+      Serial.print(current_real_mm_H, 6); Serial.print(","); // NEW
+      Serial.print(current_steps_V); Serial.print(","); 
+      Serial.print(current_cmd_mm_V, 6); Serial.print(","); // NEW
+      Serial.print(current_real_mm_V, 6); Serial.print(","); // NEW
+      Serial.print(current_lvdt_mm, 6); Serial.println();
+      
+      log_counter = 0; // Reset counter
+    }
+    log_counter++; // Increment counter for every step cycle
   }
 
-  // 7. Update current position
-  Serial.println(" ");
+  // 7. Update current position (steps 6 & 7 from original logic)
   currentPositionStepsH = targetH;
+  currentPositionStepsV = targetV;
+  
+  // 8. FINAL DATA LOGGING (Using original markers for Python compatibility)
+  
+  // Capture final time and LVDT reading at the absolute stop point
+  unsigned long time_at_stop_ms = millis();
+  float final_lvdt_mm = readLVDT_mm();
+  
+  // --- FINAL POSITION LOG (Uses markers for Python to capture the 'official' result) ---
+  // This section remains the same as it already captures the required calibration parameters.
+  Serial.println("\n#MOVE_CALC_DATA_START");
+  Serial.println("Time_ms,Desired_Horiz_MM,Commanded_Horiz_MM,X_Slope,X_Offset,Desired_Vert_MM,Commanded_Vert_MM,Y_Slope,Y_Offset,LVDT_Output");
+  
+  // Data Line
+  Serial.print(time_at_stop_ms); Serial.print(","); 
+  Serial.print(realHorizMM, 6); Serial.print(",");
+  Serial.print(horizMM_cmd_target, 6); Serial.print(",");
+  Serial.print(cal_slope_X, 6); Serial.print(",");
+  Serial.print(cal_offset_X, 6); Serial.print(",");
+  
+  Serial.print(realVertMM, 6); Serial.print(",");
+  Serial.print(vertMM_cmd_target, 6); Serial.print(",");
+  Serial.print(cal_slope_Y, 6); Serial.print(",");
+  Serial.print(cal_offset_Y, 6); Serial.print(",");
+  
+  Serial.print(final_lvdt_mm, 6);
+  Serial.println(); 
+
+  
+  Serial.println("#MOVE_CALC_DATA_END\n");
+  // ------------------------------------------------------------
+
+  Serial.println(" ");
   Serial.print("Current Pos H: ");
   Serial.println(currentPositionStepsH);
-  currentPositionStepsV = targetV;
   Serial.print("Current Pos V: ");
   Serial.println(currentPositionStepsV);
 }
