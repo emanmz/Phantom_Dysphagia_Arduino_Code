@@ -198,15 +198,23 @@ The `moveBoth` function will automatically apply the calculated **`cal_slope`** 
 
 ## ⚙️ Core Functionality
 
+
+### **Core Functionality: `moveBoth(...)`**
+
+* **Correction:** It inverts the calibration equation to find the required motor command using the formula above.
+* **Execution:** The motor is then commanded to move to the calculated **Commanded mm** position using a non-blocking step algorithm.
+
 ### `moveBoth(...)`
 
 This function handles the main movement using the calibration coefficients.
 
-  * **Correction:** It inverts the calibration equation to find the required motor command:
+### **Inverse Calibration Formula**
 
-    $$
-    \text{Commanded mm} = \frac{\text{Real mm} - \text{Offset}}{\text{Slope}}
-    $$
+The `moveBoth` function uses this formula to calculate the necessary motor command:
+
+$$
+\text{Commanded mm} = \frac{\text{Desired Real mm} - \text{Offset}}{\text{Slope}}
+$$
 
   * **Execution:** The motor is then commanded to move to the `Commanded mm` position using a non-blocking step algorithm.
 
