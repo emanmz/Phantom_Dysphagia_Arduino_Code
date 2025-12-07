@@ -240,12 +240,15 @@ This system uses a horizontal actuator (Z) and a vertical actuator (Y).
 | **H / X-Axis** | Horizontal | Forward & Backwards | `25.00 mm` |
 | **V / Y-Axis** | Vertical | Up & Down | `100.0 mm` |
 
-### **Calibration Model**
+### Calibration Model
 
 The core of the movement logic is the **inverse calibration** applied in the `moveBoth` function:
 
-$$\text{Commanded\_MM} = \frac{\text{Desired\_Real\_MM} - \text{Offset}}{\text{Slope}}$$
+$$
+\text{Commanded mm} = \frac{\text{Desired Real mm} - \text{Offset}}{\text{Slope}}
+$$
 
+This equation correctly solves for the necessary motor command to achieve the $\text{Desired Real mm}$ based on the calculated $\text{Slope}$ and $\text{Offset}$ coefficients.
 | Axis | Coefficient | Value | Description |
 | :--- | :--- | :--- | :--- |
 | **X (H)** | `cal_slope_X` | `0.900650` | Slope correction for horizontal travel. |
